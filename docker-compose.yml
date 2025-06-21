@@ -1,0 +1,86 @@
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: crypto-airdrop-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: crypto_airdrop_db
+      POSTGRES_USER: crypto_user
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-crypto_secure_password_2024}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    ports:
+      - "5432:5432"
+    networks:
+      - crypto-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U crypto_user -d crypto_airdrop_db"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Main Application
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: crypto-airdrop-app
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      DATABASE_URL: postgresql://crypto_user:${DB_PASSWORD:-crypto_secure_password_2024}@postgres:5432/crypto_airdrop_db
+      SESSION_SECRET: ${SESSION_SECRET:-crypto_session_secret_2024_secure}
+      CORS_ORIGIN: "*"
+    volumes:
+      - app_logs:/var/log/crypto-airdrop
+    ports:
+      - "5000:5000"
+    networks:
+      - crypto-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Nginx Reverse Proxy
+  nginx:
+    image: nginx:alpine
+    container_name: crypto-airdrop-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+      - nginx_logs:/var/log/nginx
+    networks:
+      - crypto-network
+    depends_on:
+      - app
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+# Named volumes for data persistence
+volumes:
+  postgres_data:
+    driver: local
+  app_logs:
+    driver: local
+  nginx_logs:
+    driver: local
+
+# Network for service communication
+networks:
+  crypto-network:
+    driver: bridge
